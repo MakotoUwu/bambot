@@ -192,6 +192,7 @@ export default function RobotLoader({ robotName }: RobotLoaderProps) {
     updateJointDegrees,
     updateJointsDegrees,
     updateJointsSpeed, // Add updateJointsSpeed
+    resetToNormalPosition, // Add reset function
   } = useRobotControl(jointDetails);
 
   useEffect(() => {
@@ -237,6 +238,8 @@ export default function RobotLoader({ robotName }: RobotLoaderProps) {
         disconnectRobot={disconnectRobot}
         keyboardControlMap={keyboardControlMap}
         compoundMovements={compoundMovements}
+        jointDetails={jointDetails}
+        resetToNormalPosition={resetToNormalPosition}
       />
       <ChatControl robotName={robotName} systemPrompt={systemPrompt} />
     </>

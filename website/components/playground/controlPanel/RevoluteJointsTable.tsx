@@ -14,11 +14,15 @@ type RevoluteJointsTableProps = {
   updateJointsDegrees: UpdateJointsDegrees;
   keyboardControlMap: RobotConfig["keyboardControlMap"];
   compoundMovements?: RobotConfig["compoundMovements"]; // Use type from robotConfig
+  keyboardEnabled?: boolean;
+  controlMode?: 'keyboard' | 'gamepad';
+  speedMultiplier?: number;
+  onSpeedChange?: (speed: number) => void;
 };
 
 // Define constants for interval and step size
 const KEY_UPDATE_INTERVAL_MS = 3;
-const KEY_UPDATE_STEP_DEGREES = 0.15;
+const BASE_KEY_UPDATE_STEP_DEGREES = 0.15;
 
 const formatVirtualDegrees = (degrees?: number) =>
   degrees !== undefined
@@ -34,13 +38,34 @@ const formatRealDegrees = (degrees?: number | "N/A" | "error") => {
 // compoundMovements 约定：keys[0] 是正向运动，keys[1] 是反向运动
 // 例如 keys: ["8", "i"]，"8" 控制正向，"i" 控制反向
 
+// Gamepad button mappings for SO-ARM100
+const gamepadControlMap: { [servoId: number]: [string, string] } = {
+  1: ['L←', 'L→'], // Base rotation: Left stick X
+  2: ['L↑', 'L↓'], // Pitch: Left stick Y  
+  3: ['R←', 'R→'], // Elbow: Right stick X
+  4: ['R↑', 'R↓'], // Wrist pitch: Right stick Y
+  5: ['L1', 'R1'], // Wrist roll: L1/R1 buttons
+  6: ['L2', 'R2'], // Jaw: L2/R2 buttons
+};
+
+const gamepadCompoundMovements = [
+  { name: 'Jaw down & up', keys: ['L2', 'R2'] },
+  { name: 'Jaw backward & forward', keys: ['L1', 'R1'] },
+];
+
 export function RevoluteJointsTable({
   joints,
   updateJointDegrees,
   updateJointsDegrees,
   keyboardControlMap,
   compoundMovements,
+  keyboardEnabled = true,
+  controlMode = 'keyboard',
+  speedMultiplier = 1.0,
+  onSpeedChange,
 }: RevoluteJointsTableProps) {
+  // Calculate actual step size based on speed multiplier
+  const KEY_UPDATE_STEP_DEGREES = BASE_KEY_UPDATE_STEP_DEGREES * speedMultiplier;
   const [pressedKeys, setPressedKeys] = useState<Set<string>>(new Set());
   // Refs to hold the latest values needed inside the interval callback
   const jointsRef = useRef(joints);
@@ -62,6 +87,12 @@ export function RevoluteJointsTable({
 
   // Effect for keyboard listeners
   useEffect(() => {
+    if (!keyboardEnabled) {
+      // Clear pressed keys when keyboard is disabled
+      setPressedKeys(new Set());
+      return;
+    }
+
     const handleKeyDown = (event: KeyboardEvent) => {
       // Check if the pressed key is actually used for control to potentially prevent default
       // Note: Using the ref here ensures we check against the *latest* map
@@ -90,10 +121,14 @@ export function RevoluteJointsTable({
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, []); // Empty dependency array: sets up listeners once
+  }, [keyboardEnabled]); // Add keyboardEnabled to dependency array
 
   // Effect for handling continuous updates when keys are pressed
   useEffect(() => {
+    if (!keyboardEnabled) {
+      return;
+    }
+
     let intervalId: NodeJS.Timeout | null = null;
 
     const updateJointsBasedOnKeys = () => {
@@ -257,7 +292,7 @@ export function RevoluteJointsTable({
         clearInterval(intervalId);
       }
     };
-  }, [pressedKeys]); // Re-run this effect only when pressedKeys changes
+  }, [pressedKeys, compoundMovements, keyboardEnabled]); // Dependencies: re-run when pressedKeys, compoundMovements, or keyboardEnabled change
 
   // Mouse handlers update the `pressedKeys` state, which triggers the interval effect
   const handleMouseDown = (key: string | undefined) => {
@@ -279,27 +314,41 @@ export function RevoluteJointsTable({
   // Component rendering uses the `joints` prop for display
   return (
     <div className="mt-4">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold">Revolute Joints</h2>
+        {onSpeedChange && (
+          <div className="flex items-center space-x-2">
+            <label className="text-sm font-medium text-gray-300">Speed:</label>
+            <input
+              type="range"
+              min="0.1"
+              max="5.0"
+              step="0.1"
+              value={speedMultiplier}
+              onChange={(e) => onSpeedChange(parseFloat(e.target.value))}
+              className="w-20 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
+            />
+            <span className="text-xs text-gray-400 min-w-[2rem]">{speedMultiplier.toFixed(1)}x</span>
+          </div>
+        )}
+      </div>
       <table className="table-auto w-full text-left text-sm">
         <thead>
-          {/* ... existing table head ... */}
           <tr>
-            <th className="border-b border-gray-600 pb-1 pr-2">Joint</th>
-            <th className="border-b border-gray-600 pb-1 text-center pl-2">
-              Angle
-            </th>
-            <th className="border-b border-gray-600 pb-1 text-center pl-2">
-              Real Angle
-            </th>
-            <th className="border-b border-gray-600 pb-1 text-center px-2">
-              Control
-            </th>
+            <th className="text-left">Joint</th>
+            <th className="text-left">Angle</th>
+            <th className="text-left">Real Angle</th>
+            <th className="text-left">Control</th>
           </tr>
         </thead>
         <tbody>
           {joints.map((detail) => {
             // Use `joints` prop for rendering current state
-            const decreaseKey = keyboardControlMap[detail.servoId!]?.[1];
-            const increaseKey = keyboardControlMap[detail.servoId!]?.[0];
+            const keyMapping = controlMode === 'gamepad' 
+              ? gamepadControlMap[detail.servoId!] 
+              : keyboardControlMap[detail.servoId!];
+            const decreaseKey = keyMapping?.[1];
+            const increaseKey = keyMapping?.[0];
             const isDecreaseActive =
               decreaseKey && pressedKeys.has(decreaseKey);
             const isIncreaseActive =
@@ -380,12 +429,13 @@ export function RevoluteJointsTable({
         </tbody>
       </table>
       {/* Display compoundMovements if present */}
-      {compoundMovements && compoundMovements.length > 0 && (
+      {((controlMode === 'gamepad' && gamepadCompoundMovements.length > 0) || 
+        (controlMode === 'keyboard' && compoundMovements && compoundMovements.length > 0)) && (
         <div className="mt-4">
           <div className="font-bold mb-2">Compound Movements</div>
           <table className="table-auto w-full text-left text-sm">
             <tbody>
-              {compoundMovements.map((cm, idx) => {
+              {(controlMode === 'gamepad' ? gamepadCompoundMovements : compoundMovements || []).map((cm, idx) => {
                 const decreaseKey = cm.keys[1];
                 const increaseKey = cm.keys[0];
                 const isDecreaseActive =
@@ -487,6 +537,23 @@ export function RevoluteJointsTable({
         input[type="range"].custom-range-thumb {
           /* Remove default focus outline for Chrome */
           outline: none;
+        }
+        .slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          background: #3b82f6;
+          cursor: pointer;
+        }
+        .slider::-moz-range-thumb {
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          background: #3b82f6;
+          cursor: pointer;
+          border: none;
         }
       `}</style>
     </div>

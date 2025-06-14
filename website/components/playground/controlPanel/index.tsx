@@ -10,7 +10,9 @@ import {
 } from "../../../hooks/useRobotControl"; // Adjusted import path
 import { RevoluteJointsTable } from "./RevoluteJointsTable"; // Updated import path
 import { ContinuousJointsTable } from "./ContinuousJointsTable"; // Updated import path
+import { GamepadControl } from "../GamepadControl"; // Import GamepadControl
 import { RobotConfig } from "@/config/robotConfig";
+import { JointDetails } from "../RobotLoader";
 
 // const baudRate = 1000000; // Define baud rate for serial communication - Keep if needed elsewhere, remove if only for UI
 
@@ -28,6 +30,8 @@ type ControlPanelProps = {
   disconnectRobot: () => void;
   keyboardControlMap: RobotConfig["keyboardControlMap"]; // New prop for keyboard control
   compoundMovements?: RobotConfig["compoundMovements"]; // Use type from robotConfig
+  jointDetails: JointDetails[];
+  resetToNormalPosition: () => Promise<void>; // Add reset function prop
 };
 
 export function ControlPanel({
@@ -41,11 +45,15 @@ export function ControlPanel({
   disconnectRobot,
   keyboardControlMap, // Destructure new prop
   compoundMovements, // Destructure new prop
+  jointDetails,
+  resetToNormalPosition, // Add reset function
 }: ControlPanelProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<
     "idle" | "connecting" | "disconnecting"
   >("idle");
+  const [controlMode, setControlMode] = useState<'keyboard' | 'gamepad'>('keyboard');
+  const [speedMultiplier, setSpeedMultiplier] = useState(2.0);
 
   const handleConnect = async () => {
     setConnectionStatus("connecting");
@@ -89,7 +97,7 @@ export function ControlPanel({
   return (
     <div className="absolute bottom-5 left-5 bg-zinc-900 bg-opacity-80 text-white p-4 rounded-lg max-h-[90vh] overflow-y-auto z-50 text-sm">
       <h3 className="mt-0 mb-4 border-b border-zinc-600 pb-1 font-bold text-base flex justify-between items-center">
-        <span>Joint Controls</span>
+        <span>Robot Controls</span>
         <button
           onClick={() => setIsCollapsed(true)}
           className="ml-2 text-xl hover:bg-zinc-800 px-2 rounded-full"
@@ -99,6 +107,18 @@ export function ControlPanel({
         </button>
       </h3>
 
+      {/* Gamepad Control Component */}
+      <GamepadControl
+        updateJointsDegrees={updateJointsDegrees}
+        updateJointsSpeed={updateJointsSpeed}
+        keyboardControlMap={keyboardControlMap}
+        compoundMovements={compoundMovements}
+        joints={jointStates}
+        jointDetails={jointDetails}
+        onControlModeChange={setControlMode}
+        speedMultiplier={speedMultiplier}
+      />
+
       {/* Revolute Joints Table */}
       {revoluteJoints.length > 0 && (
         <RevoluteJointsTable
@@ -107,6 +127,10 @@ export function ControlPanel({
           updateJointsDegrees={updateJointsDegrees}
           keyboardControlMap={keyboardControlMap}
           compoundMovements={compoundMovements}
+          keyboardEnabled={controlMode === 'keyboard'}
+          controlMode={controlMode}
+          speedMultiplier={speedMultiplier}
+          onSpeedChange={setSpeedMultiplier}
         />
       )}
 
@@ -120,7 +144,7 @@ export function ControlPanel({
       )}
 
       {/* Connection Controls */}
-      <div className="mt-4 flex justify-between items-center">
+      <div className="mt-4 space-y-2">
         <button
           onClick={isConnected ? handleDisconnect : handleConnect}
           disabled={connectionStatus !== "idle"}
@@ -139,6 +163,14 @@ export function ControlPanel({
             : isConnected
             ? "Disconnect Robot"
             : "Connect Real Robot"}
+        </button>
+        
+        {/* Reset Button */}
+        <button
+          onClick={resetToNormalPosition}
+          className="text-white text-sm px-3 py-1.5 rounded w-full bg-green-600 hover:bg-green-500 transition-colors"
+        >
+          Reset to Normal Position
         </button>
       </div>
     </div>

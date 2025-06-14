@@ -351,6 +351,58 @@ export function useRobotControl(initialJointDetails: JointDetails[]) {
     [jointStates, isConnected]
   );
 
+  // Reset all joints to normal position (0 degrees for revolute joints) with smooth animation
+  const resetToNormalPosition = useCallback(async () => {
+    const revoluteJoints = jointStates.filter(joint => joint.jointType === "revolute");
+    
+    if (revoluteJoints.length === 0) return;
+    
+    const RESET_STEP_SIZE = 2; // Degrees per step
+    const RESET_INTERVAL = 50; // Milliseconds between steps
+    
+    // Create a map of current positions
+    const currentPositions = new Map();
+    revoluteJoints.forEach(joint => {
+      currentPositions.set(joint.servoId!, joint.virtualDegrees || 0);
+    });
+    
+    const animateReset = () => {
+      const updates: { servoId: number; value: number }[] = [];
+      let allAtTarget = true;
+      
+      revoluteJoints.forEach(joint => {
+        const servoId = joint.servoId!;
+        const currentPos = currentPositions.get(servoId);
+        const targetPos = 0;
+        
+        if (Math.abs(currentPos - targetPos) > RESET_STEP_SIZE) {
+          // Move towards target
+          const direction = currentPos > targetPos ? -1 : 1;
+          const newPos = currentPos + (direction * RESET_STEP_SIZE);
+          currentPositions.set(servoId, newPos);
+          updates.push({ servoId, value: newPos });
+          allAtTarget = false;
+        } else if (currentPos !== targetPos) {
+          // Snap to target if close enough
+          currentPositions.set(servoId, targetPos);
+          updates.push({ servoId, value: targetPos });
+        }
+      });
+      
+      if (updates.length > 0) {
+        updateJointsDegrees(updates);
+      }
+      
+      if (!allAtTarget) {
+        setTimeout(animateReset, RESET_INTERVAL);
+      } else {
+        console.log("Robot arm smoothly reset to normal position");
+      }
+    };
+    
+    animateReset();
+  }, [jointStates, updateJointsDegrees]);
+
   return {
     isConnected,
     connectRobot,
@@ -360,6 +412,7 @@ export function useRobotControl(initialJointDetails: JointDetails[]) {
     updateJointsDegrees,
     updateJointSpeed,
     updateJointsSpeed, // New function
+    resetToNormalPosition, // New reset function
     setJointDetails,
   };
 }
