@@ -22,3 +22,47 @@ Play with open-source, low-cost AI robots 🤖
 ## Demo Video
 
 <a href="https://x.com/Tim_Qian/status/1901952877243122014"> <img alt="Bambot, open source, low-cost humanoid \($300\)" src="https://github.com/user-attachments/assets/bc9536e2-1fa6-4cb5-99f3-15a794bf09cf" width="600" style="height:auto;" ></a>
+
+## Running Locally
+
+### Prerequisites
+- Node.js 18+ 
+- npm or pnpm
+
+### Setup
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/timqian/bambot.git
+   cd bambot
+   ```
+
+2. Navigate to the website directory:
+   ```bash
+   cd website
+   ```
+
+3. Install dependencies:
+   ```bash
+   npm install
+   # or
+   pnpm install
+   ```
+
+4. Start the development server:
+   ```bash
+   npm run dev
+   ```
+
+5. Open your browser and visit `http://localhost:3000`
+
+### Available Scripts
+- `npm run dev` - Development server with Turbopack
+- `npm run build` - Build the application for production
+- `npm run start` - Start the production server
+- `npm run lint` - Run ESLint for code quality checks
+
+## Features
+- 🎮 **Robot Control**: Direct control interface for bambot movements
+- 🎯 **PS5 Gamepad Support**: Enhanced gamepad controls with compound movements
+- 🎨 **3D Visualization**: Real-time robot state visualization
+- 💃 **Dance Choreography**: Create and execute custom dance sequences
