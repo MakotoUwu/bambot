@@ -26,9 +26,9 @@ type ControlMode = 'keyboard' | 'gamepad';
 const GAMEPAD_UPDATE_INTERVAL = 16; // ~60fps
 const GAMEPAD_DEADZONE = 0.1;
 const BASE_GAMEPAD_SENSITIVITY = 0.30; // Match keyboard base speed (doubled for faster response)
-const BASE_GAMEPAD_BUTTON_STEP = 2.0; // Base step for button presses (doubled for faster response)
-const GAMEPAD_BUTTON_HOLD_STEP = 0.5; // Slower step for held button presses
-const BUTTON_RAMP_UP_TIME = 500; // Time in ms to reach full speed
+const BASE_GAMEPAD_BUTTON_STEP = 0.5; // Base step for button presses (smooth initial movement)
+const GAMEPAD_BUTTON_HOLD_STEP = 1.5; // Faster step for held button presses
+const BUTTON_RAMP_UP_TIME = 300; // Time in ms to reach full speed (faster ramp-up)
 const MIN_BUTTON_STEP = 0.1; // Minimum step size for smooth start
 
 // PS5 DualSense button mapping
@@ -303,6 +303,81 @@ export function GamepadControl({
     }
   }, [controlMode, applyDeadzone, updateJointsDegrees]);
 
+  // Handle compound movements with smooth control
+  const handleCompoundMovement = useCallback((movementName: string, direction: number, stepSize: number) => {
+    const currentJoints = jointsRef.current;
+    const currentCompoundMovements = compoundMovementsRef.current || [];
+    
+    const movement = currentCompoundMovements.find(m => m.name === movementName);
+    if (!movement) return;
+    
+    const primaryJoint = currentJoints.find(j => j.servoId === movement.primaryJoint);
+    if (!primaryJoint) return;
+    
+    const primary = primaryJoint.virtualDegrees || 0;
+    
+    // Calculate deltaPrimary using the formula or default direction
+    let deltaPrimary = direction * stepSize;
+    if (movement.primaryFormula) {
+      try {
+        // Create a safe evaluation context
+        const evalContext = { primary, Math };
+        const formula = movement.primaryFormula.replace(/primary/g, primary.toString());
+        deltaPrimary = direction * stepSize * eval(formula);
+      } catch (e) {
+        console.warn('Error evaluating primary formula:', e);
+        deltaPrimary = direction * stepSize;
+      }
+    }
+    
+    const updates = [{ servoId: movement.primaryJoint, value: primary + deltaPrimary }];
+    
+    // Calculate dependent joint movements
+    movement.dependents.forEach(dep => {
+      const dependentJoint = currentJoints.find(j => j.servoId === dep.joint);
+      if (!dependentJoint) return;
+      
+      const dependent = dependentJoint.virtualDegrees || 0;
+      
+      try {
+        // Create evaluation context with all variables
+        const evalContext = { primary, dependent, deltaPrimary, Math };
+        let formula = dep.formula;
+        
+        // Replace variables in formula
+        formula = formula.replace(/primary/g, primary.toString());
+        formula = formula.replace(/dependent/g, dependent.toString());
+        formula = formula.replace(/deltaPrimary/g, deltaPrimary.toString());
+        
+        const deltaDependent = eval(formula);
+        const newValue = dependent + deltaDependent;
+        
+        // Apply joint limits
+        const jointDetail = jointDetails.find(j => j.servoId === dep.joint);
+        let limitedValue = newValue;
+        if (jointDetail?.limit) {
+          const lowerLimit = Math.round(radiansToDegrees(jointDetail.limit?.lower ?? -Infinity));
+          const upperLimit = Math.round(radiansToDegrees(jointDetail.limit?.upper ?? Infinity));
+          limitedValue = Math.max(lowerLimit, Math.min(upperLimit, newValue));
+        }
+        
+        updates.push({ servoId: dep.joint, value: limitedValue });
+      } catch (e) {
+        console.warn('Error evaluating dependent formula:', e);
+      }
+    });
+    
+    // Apply joint limits to primary joint
+    const primaryJointDetail = jointDetails.find(j => j.servoId === movement.primaryJoint);
+    if (primaryJointDetail?.limit) {
+      const lowerLimit = Math.round(radiansToDegrees(primaryJointDetail.limit?.lower ?? -Infinity));
+      const upperLimit = Math.round(radiansToDegrees(primaryJointDetail.limit?.upper ?? Infinity));
+      updates[0].value = Math.max(lowerLimit, Math.min(upperLimit, updates[0].value));
+    }
+    
+    updateJointsDegrees(updates);
+  }, [updateJointsDegrees, jointDetails]);
+
   // Handle discrete button presses
   const handleButtonPress = useCallback((buttonIndex: number, isHeld: boolean = false) => {
     const currentJoints = jointsRef.current;
@@ -316,6 +391,35 @@ export function GamepadControl({
     }
     
     switch (buttonIndex) {
+      // Compound movements using D-pad
+      case PS5_BUTTONS.DPAD_UP:
+        handleCompoundMovement("Jaw down & up", 1, stepSize); // Jaw up
+        break;
+      case PS5_BUTTONS.DPAD_DOWN:
+        handleCompoundMovement("Jaw down & up", -1, stepSize); // Jaw down
+        break;
+      case PS5_BUTTONS.DPAD_LEFT:
+        handleCompoundMovement("Jaw backward & forward", -1, stepSize); // Jaw backward
+        break;
+      case PS5_BUTTONS.DPAD_RIGHT:
+        handleCompoundMovement("Jaw backward & forward", 1, stepSize); // Jaw forward
+        break;
+        
+      // Face buttons for additional compound movements
+      case PS5_BUTTONS.TRIANGLE:
+        handleCompoundMovement("Jaw down & up", 1, stepSize); // Alternative jaw up
+        break;
+      case PS5_BUTTONS.X:
+        handleCompoundMovement("Jaw down & up", -1, stepSize); // Alternative jaw down
+        break;
+      case PS5_BUTTONS.SQUARE:
+        handleCompoundMovement("Jaw backward & forward", -1, stepSize); // Alternative jaw backward
+        break;
+      case PS5_BUTTONS.CIRCLE:
+        handleCompoundMovement("Jaw backward & forward", 1, stepSize); // Alternative jaw forward
+        break;
+        
+      // Original single joint controls
       case PS5_BUTTONS.L1:
         // Wrist roll left (servo 5)
         const wristRollJoint = currentJoints.find(j => j.servoId === 5);
@@ -404,9 +508,8 @@ export function GamepadControl({
           updateJointsDegrees([{ servoId: 6, value: newValue }]);
         }
         break;
-      // Add more button mappings as needed
     }
-  }, [updateJointsDegrees]);
+  }, [updateJointsDegrees, handleCompoundMovement, jointDetails]);
 
   // Start/stop gamepad polling
   useEffect(() => {
@@ -542,7 +645,7 @@ export function GamepadControl({
           </div>
           
           {/* Trigger Buttons */}
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2 mb-3">
             <div className="flex items-center gap-2">
               <div className="bg-zinc-600 text-white px-2 py-1 rounded text-xs font-bold min-w-[24px] text-center">
                 L2
@@ -554,6 +657,68 @@ export function GamepadControl({
                 R2
               </div>
               <span className="text-zinc-400 text-xs">Jaw open</span>
+            </div>
+          </div>
+          
+          {/* D-pad for Compound Movements */}
+          <div className="bg-zinc-700 rounded-lg p-2 mb-3">
+            <div className="text-zinc-300 text-xs font-medium mb-2">D-pad (Compound Movements):</div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex items-center gap-2">
+                <div className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-bold min-w-[24px] text-center">
+                  ↑
+                </div>
+                <span className="text-zinc-400 text-xs">Jaw up (compound)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-bold min-w-[24px] text-center">
+                  ↓
+                </div>
+                <span className="text-zinc-400 text-xs">Jaw down (compound)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-bold min-w-[24px] text-center">
+                  ←
+                </div>
+                <span className="text-zinc-400 text-xs">Jaw backward (compound)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-bold min-w-[24px] text-center">
+                  →
+                </div>
+                <span className="text-zinc-400 text-xs">Jaw forward (compound)</span>
+              </div>
+            </div>
+          </div>
+          
+          {/* Face Buttons for Compound Movements */}
+          <div className="bg-zinc-700 rounded-lg p-2">
+            <div className="text-zinc-300 text-xs font-medium mb-2">Face Buttons (Compound Movements):</div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex items-center gap-2">
+                <div className="bg-green-600 text-white px-2 py-1 rounded text-xs font-bold min-w-[24px] text-center">
+                  △
+                </div>
+                <span className="text-zinc-400 text-xs">Jaw up (compound)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="bg-green-600 text-white px-2 py-1 rounded text-xs font-bold min-w-[24px] text-center">
+                  ✕
+                </div>
+                <span className="text-zinc-400 text-xs">Jaw down (compound)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="bg-green-600 text-white px-2 py-1 rounded text-xs font-bold min-w-[24px] text-center">
+                  ◻
+                </div>
+                <span className="text-zinc-400 text-xs">Jaw backward (compound)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="bg-green-600 text-white px-2 py-1 rounded text-xs font-bold min-w-[24px] text-center">
+                  ○
+                </div>
+                <span className="text-zinc-400 text-xs">Jaw forward (compound)</span>
+              </div>
             </div>
           </div>
         </div>
